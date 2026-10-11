@@ -190,7 +190,7 @@ main.in{padding-block:14px 44px;display:flex;flex-direction:column;gap:14px}
 .mo-li .when{font:600 13px/1.3 var(--body);font-variant-numeric:tabular-nums;color:var(--ink2)}
 .legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;color:var(--ink2)}
 .lg{display:inline-flex;align-items:center;gap:7px}
-.sw{width:16px;height:16px;border-radius:5px;display:inline-block;border:1px solid var(--line)}
+.sw{width:16px;height:16px;flex:none;border-radius:5px;display:inline-block;border:1px solid var(--line)}
 .sw.hatch{background:repeating-linear-gradient(135deg,var(--muted) 0 2px,transparent 2px 5px)}
 
 /* notes */
@@ -259,10 +259,20 @@ details[open]>summary .chev{transform:rotate(180deg)}
 
 /* marking days */
 .markrow{display:flex;flex-direction:column;gap:7px}
+.pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:460px}
+.pick .btn{border-radius:14px;padding:8px 6px;min-height:44px}
+.btn.mark span,.brush button span{display:block}
+.btn.mark span{font-size:13px}
 .btn.mark.on{border-color:transparent;box-shadow:inset 0 0 0 2px currentColor}
-.seg.brush{grid-column:auto;grid-row:auto;flex:1 1 100%;max-width:460px}
+.brush{flex:1 1 100%;max-width:460px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px;background:var(--surface);border:1px solid var(--line);border-radius:17px;padding:3px}
+.brush button{grid-column:span 2;border:0;background:transparent;color:var(--ink2);font:600 14px/1.15 var(--body);padding:8px 6px;min-height:36px;border-radius:13px;cursor:pointer}
+.brush button.wide{grid-column:span 3;font-size:13px}
+.brush button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
 .brush button[data-v="nn"][aria-pressed="true"]{background:var(--nat-bg);color:var(--nat-ink);box-shadow:inset 0 0 0 2px var(--nat-ink)}
 .brush button[data-v="dd"][aria-pressed="true"]{background:var(--den-bg);color:var(--den-ink);box-shadow:inset 0 0 0 2px var(--den-ink)}
+.brush button[data-v="nd"][aria-pressed="true"]{background:linear-gradient(135deg,var(--nat-bg) 0 50%,var(--den-bg) 50% 100%);color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+.brush button[data-v="dn"][aria-pressed="true"]{background:linear-gradient(135deg,var(--den-bg) 0 50%,var(--nat-bg) 50% 100%);color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+.savebar .save-msg.inl{flex:0 0 auto;display:block;font-size:13px;white-space:nowrap;color:var(--ink2)}
 .mo-cell.chg{outline:2px dashed var(--ink);outline-offset:-3px}
 .paint-hint{font-size:14px;color:var(--ink2)}
 .steps a{color:inherit;font-weight:600}

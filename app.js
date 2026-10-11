@@ -162,6 +162,9 @@ const sClass = (v) => 's-' + (v || 'none');
 function stayParts(v) { if (STAYV.indexOf(v) < 0) return null; const P = state.people, who = (c) => (c === 'n' ? P.n : P.d); return { a: who(v[0]), b: who(v[1]), same: v[0] === v[1], ca: v[0], cb: v[1] }; }
 function stayShort(v) { const p = stayParts(v); if (!p) return ''; return p.same ? 'у ' + p.a.gen : 'у ' + p.a.gen + ' → у ' + p.b.gen; }
 function stayLetters(v) { const p = stayParts(v); if (!p) return ''; return p.same ? p.a.name.charAt(0) : p.a.name.charAt(0) + '→' + p.b.name.charAt(0); }
+function stayLong(v) { const p = stayParts(v); if (!p) return ''; return p.same ? 'у ' + p.a.gen : 'утром у ' + p.a.gen + ', вечером у ' + p.b.gen; }
+/* Caption of a marking button, as HTML; a day with a hand-over takes two lines. */
+function stayPick(v) { const p = stayParts(v); if (!p) return ''; return p.same ? 'У ' + esc(p.a.gen) : '<span>Утром у ' + esc(p.a.gen) + ',</span> <span>вечером у ' + esc(p.b.gen) + '</span>'; }
 
 /* ---------- icons ---------- */
 const svg = (d) => '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="' + d + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -234,10 +237,10 @@ function nowInfo(items) {
 }
 
 function markRow(iso) {
-  const v = stayOn(iso), P = state.people, off = saving ? ' disabled' : '';
-  const b = (val, label) => '<button type="button" class="btn mark' + (v === val ? ' on ' + sClass(val) : '') + '" data-act="mark" data-d="' + iso + '" data-v="' + val + '" aria-pressed="' + (v === val) + '"' + off + '>' + esc(label) + '</button>';
-  return '<div class="markrow" role="group" aria-label="Отметить этот день"><span class="lbl">Отметить этот день</span><div class="quick">' + b('nn', 'У ' + P.n.gen) + b('dd', 'У ' + P.d.gen)
-    + (state.marks[iso] ? '<button type="button" class="btn" data-act="mark" data-d="' + iso + '" data-v=""' + off + '>Сбросить</button>' : '') + '</div>'
+  const v = stayOn(iso), off = saving ? ' disabled' : '';
+  const b = (val) => '<button type="button" class="btn mark' + (v === val ? ' on ' + sClass(val) : '') + '" data-act="mark" data-d="' + iso + '" data-v="' + val + '" aria-pressed="' + (v === val) + '"' + off + '>' + stayPick(val) + '</button>';
+  return '<div class="markrow" role="group" aria-label="Отметить этот день"><span class="lbl">Отметить этот день</span><div class="pick">' + STAYV.map(b).join('') + '</div>'
+    + (state.marks[iso] ? '<div class="quick"><button type="button" class="btn" data-act="mark" data-d="' + iso + '" data-v=""' + off + '>Сбросить</button></div>' : '')
     + (markMsg ? '<p class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</p>' : '') + '</div>';
 }
 function paintEntry() {
@@ -245,11 +248,11 @@ function paintEntry() {
   return '<div class="quick"><button type="button" class="btn" data-act="paint">Отметить дни</button>' + (markMsg ? '<span class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</span>' : '') + '</div>';
 }
 function paintBar() {
-  const P = state.people, n = Object.keys(paint.changes).length, off = saving ? ' disabled' : '', bad = markMsg && markMsg.kind === 'err';
-  const b = (val, label) => '<button type="button" data-act="brush" data-v="' + val + '" aria-pressed="' + (paint.brush === val) + '">' + esc(label) + '</button>';
-  return '<div class="savebar" id="paintbar"><div class="seg brush" role="group" aria-label="Кого отмечаем">' + b('nn', 'У ' + P.n.gen) + b('dd', 'У ' + P.d.gen) + b('', 'Стереть') + '</div>'
+  const n = Object.keys(paint.changes).length, off = saving ? ' disabled' : '', bad = markMsg && markMsg.kind === 'err';
+  const b = (val, wide) => '<button type="button"' + (wide ? ' class="wide"' : '') + ' data-act="brush" data-v="' + val + '" aria-pressed="' + (paint.brush === val) + '">' + (val ? stayPick(val) : 'Стереть') + '</button>';
+  return '<div class="savebar" id="paintbar"><div class="brush" role="group" aria-label="Кого отмечаем">' + b('nn') + b('dd') + b('') + b('nd', true) + b('dn', true) + '</div>'
     + '<button type="button" class="btn primary" data-act="paint-save"' + off + '>' + (saving ? 'Сохраняю…' : 'Сохранить') + '</button><button type="button" class="btn" data-act="paint-cancel"' + off + '>Отмена</button>'
-    + '<span class="save-msg' + (bad ? ' err' : '') + '" role="status">' + esc(bad ? markMsg.text : n ? 'Изменено дней: ' + n : 'Пока ничего не изменено') + '</span></div>';
+    + '<span class="save-msg' + (bad ? ' err' : ' inl') + '" role="status">' + esc(bad ? markMsg.text : 'Изменено дней: ' + n) + '</span></div>';
 }
 function dab(d) {
   if (!paint || !isIso(d)) return;
@@ -334,8 +337,9 @@ function monthCell(iso, inMonth) {
 function monthView() {
   const p = ymd(cursor), first = toIso(Date.UTC(p.y, p.m - 1, 1)), last = toIso(Date.UTC(p.y, p.m, 0)), ym = first.slice(0, 7);
   let h = (paint ? '<p class="paint-hint">Выберите внизу, кого отмечаете, и нажимайте на дни. В конце нажмите «Сохранить».</p>' : paintEntry()) + '<div class="mo"><div class="mo-head" aria-hidden="true">' + WD.map((w) => '<span>' + w + '</span>').join('') + '</div><div class="mo-grid">';
-  for (let d = monday(first); d <= last; d = addDays(d, 7)) for (let i = 0; i < 7; i++) { const iso = addDays(d, i); h += monthCell(iso, iso.slice(0, 7) === ym); }
-  h += '</div></div>' + legend(true);
+  const seen = {};
+  for (let d = monday(first); d <= last; d = addDays(d, 7)) for (let i = 0; i < 7; i++) { const iso = addDays(d, i); seen[stayOn(iso)] = true; h += monthCell(iso, iso.slice(0, 7) === ym); }
+  h += '</div></div>' + legend(true, seen);
   if (paint) return h;
   const items = [];
   state.plans.forEach((x) => { if (x && x.t && isIso(x.date)) { const to = isIso(x.to) ? x.to : x.date; if (x.date <= last && to >= first) items.push({ from: x.date, to: to, t: x.t, kind: 'plan' }); } });
@@ -348,9 +352,10 @@ function monthView() {
   return h + '</section>';
 }
 
-function legend(month) {
+function legend(month, seen) {
   const P = state.people;
-  return '<div class="legend"><span class="lg"><i class="sw s-nn"></i>у ' + esc(P.n.gen) + '</span><span class="lg"><i class="sw s-dd"></i>у ' + esc(P.d.gen) + '</span><span class="lg"><i class="mk club"></i>кружок</span><span class="lg"><i class="mk plan"></i>план</span>' + (month ? '<span class="lg"><i class="sw hatch"></i>уроков нет</span>' : '') + '</div>';
+  const half = (v) => (seen && seen[v] ? '<span class="lg"><i class="sw ' + sClass(v) + '"></i>' + esc(stayLetters(v) + ' — ' + stayLong(v)) + '</span>' : '');
+  return '<div class="legend"><span class="lg"><i class="sw s-nn"></i>у ' + esc(P.n.gen) + '</span><span class="lg"><i class="sw s-dd"></i>у ' + esc(P.d.gen) + '</span>' + half('nd') + half('dn') + '<span class="lg"><i class="mk club"></i>кружок</span><span class="lg"><i class="mk plan"></i>план</span>' + (month ? '<span class="lg"><i class="sw hatch"></i>уроков нет</span>' : '') + '</div>';
 }
 
 function noticeHtml() {
