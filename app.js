@@ -56,6 +56,7 @@ function fmtSpan(a, b) {
 }
 
 /* ---------- state ---------- */
+const cleanMarks = (m) => { const o = {}; if (m && typeof m === 'object') Object.keys(m).sort().forEach((k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(k) && (m[k] === 'nn' || m[k] === 'dd' || m[k] === 'nd' || m[k] === 'dn')) o[k] = m[k]; }); return o; };
 const VIEWS = ['day', 'week', 'month'];
 const STAYV = ['nn', 'dd', 'nd', 'dn'];
 const fill7 = (a) => { const o = []; for (let i = 0; i < 7; i++) o.push(Array.isArray(a) && STAYV.indexOf(a[i]) >= 0 ? a[i] : ''); return o; };
@@ -78,6 +79,7 @@ function migrate(s) {
   s.sample = !!s.sample;
   s.note = typeof s.note === 'string' ? s.note : '';
   s.rev = +s.rev || 0;
+  s.marks = cleanMarks(s.marks);
   return s;
 }
 
@@ -90,7 +92,7 @@ function normalize(d) {
     child: { name: T(d.child.name), gen: T(d.child.gen) },
     people: { n: { name: T(d.people.n.name), gen: T(d.people.n.gen) }, d: { name: T(d.people.d.name), gen: T(d.people.d.gen) } },
     stay: { mode: d.stay.mode === 'biweekly' ? 'biweekly' : 'weekly', anchor: isIso(d.stay.anchor) ? monday(d.stay.anchor) : '', a: fill7(d.stay.a), b: fill7(d.stay.b) },
-    stayOverrides: [], bells: [], lessons: {}, clubs: [], plans: [], daysOff: []
+    stayOverrides: [], marks: cleanMarks(d.marks), bells: [], lessons: {}, clubs: [], plans: [], daysOff: []
   };
   if (o.stay.mode === 'biweekly' && !o.stay.anchor) o.stay.anchor = monday(rigaNow().date);
   (d.stayOverrides || []).forEach((x) => { if (x && isIso(x.from) && STAYV.indexOf(x.v) >= 0) o.stayOverrides.push({ from: x.from, to: isIso(x.to) && x.to >= x.from ? x.to : x.from, v: x.v }); });
@@ -116,15 +118,18 @@ let view = 'day', cursor = NOW.date, mode = 'view';
 let draft = null, dirty = false, edWd = 1, openSecs = {}, saving = false, askCancel = false, saveMsg = null;
 let notice = null, lastNow = '';
 let phase = 'boot', key = null, keyText = '', offline = false, syncedAt = 0, gateMsg = '';
-let gh = null, loginMsg = '', loginBusy = false, baseRev = 0;
+let gh = null, loginMsg = '', loginBusy = false, baseRev = 0, paint = null, markMsg = null;
 const editable = () => !!gh;
 
 const ss = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* storage is optional */ } }, del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage is optional */ } } };
 const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage is optional */ } }, del(k) { try { localStorage.removeItem(k); } catch (e) { /* storage is optional */ } } };
 
 /* ---------- what happens on a given day ---------- */
+/* A day marked in the calendar wins over exceptions and over the weekly template. */
+function marksNow() { return paint ? paint.merged : state.marks; }
 function stayOn(iso, src) {
-  const s = src || state, ov = s.stayOverrides || [];
+  const s = src || state, ov = s.stayOverrides || [], mk = src ? (src.marks || {}) : marksNow();
+  if (STAYV.indexOf(mk[iso]) >= 0) return mk[iso];
   for (let i = ov.length - 1; i >= 0; i--) { const o = ov[i]; if (o && isIso(o.from) && iso >= o.from && iso <= (isIso(o.to) ? o.to : o.from) && STAYV.indexOf(o.v) >= 0) return o.v; }
   let row = s.stay.a;
   if (s.stay.mode === 'biweekly' && isIso(s.stay.anchor)) {
@@ -133,7 +138,7 @@ function stayOn(iso, src) {
   }
   return row[dow(iso)] || '';
 }
-const stayEmpty = (s) => !s.stayOverrides.length && s.stay.a.every((x) => !x) && (s.stay.mode !== 'biweekly' || s.stay.b.every((x) => !x));
+const stayEmpty = (s) => !Object.keys(s.marks || {}).length && !s.stayOverrides.length && s.stay.a.every((x) => !x) && (s.stay.mode !== 'biweekly' || s.stay.b.every((x) => !x));
 function offOn(iso) { const a = state.daysOff; for (let i = 0; i < a.length; i++) { const o = a[i]; if (o && isIso(o.from) && iso >= o.from && iso <= (isIso(o.to) ? o.to : o.from)) return o; } return null; }
 function lessonsOn(iso) {
   const w = dow(iso);
@@ -176,8 +181,8 @@ function shift(n) {
 }
 
 function topBar() {
-  const ready = phase === 'ready', plain = ready && mode === 'view';
-  let h = '<header class="top"><div class="in top-in"><div class="brand"><span class="brand-name">' + esc((ready && state.child.name) || 'Расписание') + '</span>' + (ready && state.child.name ? '<span class="brand-sub">' + (mode === 'edit' ? 'изменение расписания' : mode === 'login' ? 'вход для редактора' : 'расписание') + '</span>' : '') + '</div>';
+  const ready = phase === 'ready', plain = ready && mode === 'view' && !paint;
+  let h = '<header class="top"><div class="in top-in"><div class="brand"><span class="brand-name">' + esc((ready && state.child.name) || 'Расписание') + '</span>' + (ready && state.child.name ? '<span class="brand-sub">' + (mode === 'edit' ? 'изменение расписания' : mode === 'login' ? 'вход для редактора' : paint ? 'отмечаем дни' : 'расписание') + '</span>' : '') + '</div>';
   if (plain && editable()) h += '<button type="button" class="btn" data-act="edit">Изменить</button>';
   if (plain) h += '<div class="seg" role="group" aria-label="Период">' + [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц']].map((v) => '<button type="button" data-act="view" data-v="' + v[0] + '" aria-pressed="' + (view === v[0]) + '">' + v[1] + '</button>').join('') + '</div>';
   return h + '</div></header>';
@@ -208,7 +213,7 @@ function nav() {
 
 function stayBanner(v) {
   const p = stayParts(v), who = esc(state.child.name);
-  if (!p) return '<div class="stay s-none"><small>Где ' + who + '</small><strong>Пока не указано</strong>' + (editable() ? '<span class="stay-hint">Нажмите «Изменить» и откройте раздел «Где ' + who + '».</span>' : '') + '</div>';
+  if (!p) return '<div class="stay s-none"><small>Где ' + who + '</small><strong>Пока не указано</strong>' + (editable() ? '<span class="stay-hint">Отметьте день кнопками ниже.</span>' : '') + '</div>';
   if (p.same) return '<div class="stay ' + sClass(v) + '"><small>Где ' + who + '</small><strong>У ' + esc(p.a.gen) + '</strong></div>';
   return '<div class="stay split" role="group" aria-label="Где ' + who + '"><div class="half s-' + p.ca + p.ca + '"><small>Утром</small><strong>У ' + esc(p.a.gen) + '</strong></div><div class="half s-' + p.cb + p.cb + '"><small>Вечером</small><strong>У ' + esc(p.b.gen) + '</strong></div></div>';
 }
@@ -228,6 +233,34 @@ function nowInfo(items) {
   return { key: '', text: (next.kind === 'lesson' ? 'Перемена. ' : '') + 'Дальше: ' + next.t + ' в ' + fmtT(next.s) };
 }
 
+function markRow(iso) {
+  const v = stayOn(iso), P = state.people, off = saving ? ' disabled' : '';
+  const b = (val, label) => '<button type="button" class="btn mark' + (v === val ? ' on ' + sClass(val) : '') + '" data-act="mark" data-d="' + iso + '" data-v="' + val + '" aria-pressed="' + (v === val) + '"' + off + '>' + esc(label) + '</button>';
+  return '<div class="markrow" role="group" aria-label="Отметить этот день"><span class="lbl">Отметить этот день</span><div class="quick">' + b('nn', 'У ' + P.n.gen) + b('dd', 'У ' + P.d.gen)
+    + (state.marks[iso] ? '<button type="button" class="btn" data-act="mark" data-d="' + iso + '" data-v=""' + off + '>Сбросить</button>' : '') + '</div>'
+    + (markMsg ? '<p class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</p>' : '') + '</div>';
+}
+function paintEntry() {
+  if (!editable() || paint) return '';
+  return '<div class="quick"><button type="button" class="btn" data-act="paint">Отметить дни</button>' + (markMsg ? '<span class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</span>' : '') + '</div>';
+}
+function paintBar() {
+  const P = state.people, n = Object.keys(paint.changes).length, off = saving ? ' disabled' : '', bad = markMsg && markMsg.kind === 'err';
+  const b = (val, label) => '<button type="button" data-act="brush" data-v="' + val + '" aria-pressed="' + (paint.brush === val) + '">' + esc(label) + '</button>';
+  return '<div class="savebar" id="paintbar"><div class="seg brush" role="group" aria-label="Кого отмечаем">' + b('nn', 'У ' + P.n.gen) + b('dd', 'У ' + P.d.gen) + b('', 'Стереть') + '</div>'
+    + '<button type="button" class="btn primary" data-act="paint-save"' + off + '>' + (saving ? 'Сохраняю…' : 'Сохранить') + '</button><button type="button" class="btn" data-act="paint-cancel"' + off + '>Отмена</button>'
+    + '<span class="save-msg' + (bad ? ' err' : '') + '" role="status">' + esc(bad ? markMsg.text : n ? 'Изменено дней: ' + n : 'Пока ничего не изменено') + '</span></div>';
+}
+function dab(d) {
+  if (!paint || !isIso(d)) return;
+  const cur = state.marks[d] || '', want = paint.brush;
+  if (paint.changes[d] === want || want === cur) delete paint.changes[d];
+  else paint.changes[d] = want;
+  const m = Object.assign({}, state.marks);
+  Object.keys(paint.changes).forEach((k) => { if (paint.changes[k]) m[k] = paint.changes[k]; else delete m[k]; });
+  paint.merged = m;
+  render(true);
+}
 const outLink = (u, t) => '<a class="lnk" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + IC_GO + esc(t) + '</a>';
 function restRow(x, curKey) {
   const time = fmtR(x.s, x.e) || (x.kind === 'club' ? '<span aria-hidden="true">—</span><span class="vh">время не указано</span>' : 'весь день');
@@ -242,6 +275,7 @@ function dayView() {
   const curKey = info ? info.key : '';
   lastNow = info ? info.text : '';
   let h = '<div class="day">' + stayBanner(stayOn(iso));
+  if (editable()) h += markRow(iso);
   if (info) h += '<p class="nowline">' + esc(info.text) + '</p>';
   if (L.length) {
     h += '<section><div class="sec-h"><h2>Уроки</h2><span>' + fmtR(L[0].s, L[L.length - 1].e) + ' · ' + plural(L.length, ['урок', 'урока', 'уроков']) + '</span></div><ol class="tl">'
@@ -257,7 +291,7 @@ function dayView() {
   } else {
     h += '<p class="quiet">Кружков и планов на этот день нет.</p>';
   }
-  if (editable()) h += '<div class="quick"><button type="button" class="btn" data-act="ov" data-d="' + iso + '">Изменить, у кого ' + esc(state.child.name) + ' в этот день</button><button type="button" class="btn" data-act="addplan" data-d="' + iso + '">Добавить план на этот день</button></div>';
+  if (editable()) h += '<div class="quick"><button type="button" class="btn" data-act="addplan" data-d="' + iso + '">Добавить план на этот день</button></div>';
   return h + '</div>';
 }
 
@@ -277,7 +311,7 @@ function weekDay(iso) {
 }
 function weekView() {
   const a = monday(cursor);
-  let h = '<div class="wk">';
+  let h = paintEntry() + '<div class="wk">';
   for (let i = 0; i < 7; i++) h += weekDay(addDays(a, i));
   return h + '</div>' + legend(false);
 }
@@ -287,10 +321,11 @@ function monthCell(iso, inMonth) {
   const cls = ['mo-cell', sClass(v)];
   if (!inMonth) cls.push('out');
   if (iso === NOW.date) cls.push('today');
+  if (paint && paint.changes[iso] !== undefined) cls.push('chg');
   const isOff = off && w < 5;
   if (isOff) cls.push('off');
   const label = [fmtD(iso), WDF[w], stayShort(v), isOff ? (off.t || 'уроков нет') : ''].concat(C.map((c) => 'кружок: ' + c.t), P.map((p) => 'план: ' + p.t)).filter(Boolean).join(', ');
-  return '<button type="button" class="' + cls.join(' ') + '" data-act="open" data-d="' + iso + '" aria-label="' + esc(label) + '"><span class="mo-in">'
+  return '<button type="button" class="' + cls.join(' ') + '" data-act="' + (paint ? 'dab' : 'open') + '" data-d="' + iso + '" aria-label="' + esc(label) + '"><span class="mo-in">'
     + '<span class="mo-top"><span class="mo-d">' + ymd(iso).d + '</span><span class="mo-who">' + esc(stayLetters(v)) + '</span></span>'
     + '<span class="mo-marks">' + C.map(() => '<i class="mk club"></i>').join('') + P.map(() => '<i class="mk plan"></i>').join('') + '</span>'
     + '<span class="mo-text">' + (isOff ? '<span>' + esc(off.t || 'Уроков нет') + '</span>' : '') + C.map((c) => '<span>' + (fmtT(c.s) ? fmtT(c.s) + ' ' : '') + esc(c.t) + '</span>').join('') + P.map((p) => '<span>' + esc(p.t) + '</span>').join('') + '</span>'
@@ -298,9 +333,10 @@ function monthCell(iso, inMonth) {
 }
 function monthView() {
   const p = ymd(cursor), first = toIso(Date.UTC(p.y, p.m - 1, 1)), last = toIso(Date.UTC(p.y, p.m, 0)), ym = first.slice(0, 7);
-  let h = '<div class="mo"><div class="mo-head" aria-hidden="true">' + WD.map((w) => '<span>' + w + '</span>').join('') + '</div><div class="mo-grid">';
+  let h = (paint ? '<p class="paint-hint">Выберите внизу, кого отмечаете, и нажимайте на дни. В конце нажмите «Сохранить».</p>' : paintEntry()) + '<div class="mo"><div class="mo-head" aria-hidden="true">' + WD.map((w) => '<span>' + w + '</span>').join('') + '</div><div class="mo-grid">';
   for (let d = monday(first); d <= last; d = addDays(d, 7)) for (let i = 0; i < 7; i++) { const iso = addDays(d, i); h += monthCell(iso, iso.slice(0, 7) === ym); }
   h += '</div></div>' + legend(true);
+  if (paint) return h;
   const items = [];
   state.plans.forEach((x) => { if (x && x.t && isIso(x.date)) { const to = isIso(x.to) ? x.to : x.date; if (x.date <= last && to >= first) items.push({ from: x.date, to: to, t: x.t, kind: 'plan' }); } });
   state.daysOff.forEach((x) => { if (x && isIso(x.from)) { const to = isIso(x.to) ? x.to : x.from; if (x.from <= last && to >= first) items.push({ from: x.from, to: to, t: (x.t || 'Уроков нет'), kind: 'off' }); } });
@@ -328,10 +364,11 @@ function viewBody() {
   if (offline) h += '<div class="callout" role="status"><span>Нет связи. Показано расписание, сохранённое ' + esc(whenText(syncedAt)) + '.</span></div>';
   if (state.sample) h += '<div class="callout" role="note"><span><b>Образец.</b> Уроки и звонки здесь примерные. Настоящее расписание появится, когда ' + esc(state.people.d.name) + ' его внесёт.</span></div>';
   if (state.note) h += '<div class="callout" role="note"><span>' + esc(state.note) + '</span></div>';
-  if (editable() && stayEmpty(state)) h += '<div class="callout" role="note"><span>Дни у ' + esc(state.people.n.gen) + ' и у ' + esc(state.people.d.gen) + ' ещё не указаны.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="edit" data-sec="stay">Указать</button></span></div>';
+  if (editable() && !paint && stayEmpty(state)) h += '<div class="callout" role="note"><span>Дни у ' + esc(state.people.n.gen) + ' и у ' + esc(state.people.d.gen) + ' ещё не указаны.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="paint">Отметить дни</button></span></div>';
   h += nav();
   h += view === 'day' ? dayView() : view === 'week' ? weekView() : monthView();
   h += '<p class="foot">' + (state.updated ? 'Обновлено ' + fmtD(state.updated) + ' ' + ymd(state.updated).y + '. ' : '') + 'Менять расписание может только ' + esc(state.people.d.name) + '. ' + (gh ? '<button type="button" class="linkbtn" data-act="logout">Выйти из режима редактора</button>' : '<button type="button" class="linkbtn" data-act="login">Вход для редактора</button>') + '</p>';
+  if (paint) h += paintBar();
   return h;
 }
 
@@ -350,7 +387,10 @@ function sel(k, val, placeholder) {
 function edStay() {
   const s = draft.stay, bi = s.mode === 'biweekly', child = esc(draft.child.name);
   const block = (key, title) => '<div class="blk"><h3>' + title + '</h3>' + WDF.map((w, i) => '<label class="row"><span class="row-l">' + cap(w) + '</span>' + sel('stay.' + key + '.' + i, s[key][i], 'не указано') + '</label>').join('') + '</div>';
-  let h = '<div class="choice" role="radiogroup" aria-label="Как повторяются недели">'
+  const nm = Object.keys(draft.marks || {}).length;
+  let h = '<p class="hint">Отдельные дни проще отмечать прямо в календаре кнопкой «Отметить дни». Шаблон ниже действует в дни без отметки.</p>'
+    + (nm ? '<div class="quick"><span class="hint">Отмечено дней в календаре: ' + nm + '.</span><button type="button" class="btn" data-act="clear-marks">Убрать все отметки</button></div>' : '')
+    + '<div class="choice" role="radiogroup" aria-label="Как повторяются недели">'
     + '<label><input type="radio" name="staymode" id="f-stay-mode-weekly" data-k="stay.mode" value="weekly"' + (bi ? '' : ' checked') + '>Каждая неделя одинаковая</label>'
     + '<label><input type="radio" name="staymode" id="f-stay-mode-biweekly" data-k="stay.mode" value="biweekly"' + (bi ? ' checked' : '') + '>Две недели чередуются</label></div>';
   h += '<div class="cols">' + block('a', bi ? 'Неделя А' : 'По дням недели') + (bi ? block('b', 'Неделя Б') : '') + '</div>';
@@ -531,7 +571,7 @@ async function fetchSealed() {
 }
 function lockOut() {
   key = null; keyText = ''; ls.del('sched.k'); ls.del('sched.cache');
-  phase = 'badkey'; mode = 'view'; draft = null; render();
+  phase = 'badkey'; mode = 'view'; draft = null; paint = null; render();
 }
 function candidates() {
   const out = [];
@@ -560,13 +600,13 @@ async function start(keys) {
   offline = false; syncedAt = Date.now(); remember(obj); adopt(obj);
 }
 async function refresh() {
-  if (phase !== 'ready' || mode !== 'view' || !key || saving) return;
+  if (phase !== 'ready' || mode !== 'view' || !key || saving || paint) return;
   let text;
   try { text = await fetchSealed(); }
   catch (e) { if (!offline) { offline = true; if (mode === 'view') render(true); } return; }
   let obj;
   try { obj = await unseal(text); } catch (e) { lockOut(); return; }
-  if (phase !== 'ready' || mode !== 'view') return;
+  if (phase !== 'ready' || mode !== 'view' || paint) return;
   const was = offline;
   offline = false; syncedAt = Date.now();
   /* right after a save the host may still serve the previous copy for a minute: never step back to it */
@@ -623,33 +663,45 @@ async function login(token) {
   }
   loginBusy = false; render(true);
 }
+function failText(e) {
+  const code = e && e.code;
+  if (code === 'auth') return 'GitHub не принял токен: возможно, срок его действия истёк. Выйдите из режима редактора и войдите с новым токеном.';
+  if (code === 'scope') return 'У токена нет права записи в репозиторий сайта. Нужно разрешение Contents: Read and write.';
+  if (code === 'race') return 'Файл расписания только что изменился. Попробуйте ещё раз.';
+  if (code === 'network') return 'Нет связи с GitHub. Проверьте интернет и попробуйте ещё раз.';
+  if (code === 'norepo') return 'Не удалось определить репозиторий этого сайта.';
+  return 'Не получилось сохранить' + (e && e.status ? ' (ошибка ' + e.status + ')' : '') + '. Попробуйте ещё раз.';
+}
+/* One commit to data.json. makeNext receives the newest copy in the repository (or null) and returns what to store. */
+async function writeRemote(makeNext) {
+  if (!gh) throw { code: 'auth' };
+  const branch = gh.branch || 'main';
+  const cur = await api('/contents/data.json?ref=' + encodeURIComponent(branch));
+  let sha = null, remote = null;
+  if (cur.status === 200) {
+    const j = await cur.json();
+    sha = j.sha || null;
+    try { remote = await unseal(utf8.dec(b64.dec(String(j.content || '').replace(/\s+/g, '')))); } catch (e) { remote = null; }
+  } else if (cur.status === 401) throw { code: 'auth' };
+  else if (cur.status === 403) throw { code: 'scope' };
+  else if (cur.status !== 404) throw { code: 'http', status: cur.status };
+  const next = makeNext(remote);
+  next.rev = Math.max(Date.now(), (remote ? +remote.rev || 0 : 0) + 1, (+state.rev || 0) + 1);
+  const body = { message: 'update', content: b64.enc(utf8.enc(await seal(next))), branch: branch };
+  if (sha) body.sha = sha;
+  const put = await api('/contents/data.json', { method: 'PUT', body: JSON.stringify(body) });
+  if (put.status !== 200 && put.status !== 201) throw { code: put.status === 401 ? 'auth' : put.status === 403 || put.status === 404 ? 'scope' : put.status === 409 || put.status === 422 ? 'race' : 'http', status: put.status };
+  return next;
+}
+function landed(next) { state = migrate(JSON.parse(JSON.stringify(next))); remember(next); syncedAt = Date.now(); offline = false; }
 async function save(force) {
   if (saving || !draft) return;
-  const next = normalize(draft);
-  next.updated = rigaNow().date;
-  next.rev = Date.now();
+  const mine = normalize(draft);
+  mine.updated = rigaNow().date;
   saving = true; saveMsg = null; askCancel = false; renderSaveBar();
   try {
-    if (!gh) throw { code: 'auth' };
-    const branch = gh.branch || 'main';
-    const cur = await api('/contents/data.json?ref=' + encodeURIComponent(branch));
-    let sha = null;
-    if (cur.status === 200) {
-      const j = await cur.json();
-      sha = j.sha || null;
-      if (!force) {
-        let remoteRev = null;
-        try { remoteRev = +(await unseal(utf8.dec(b64.dec(String(j.content || '').replace(/\s+/g, ''))))).rev || 0; } catch (e) { remoteRev = null; }
-        if (remoteRev !== null && remoteRev !== baseRev) throw { code: 'changed' };
-      }
-    } else if (cur.status === 401) throw { code: 'auth' };
-    else if (cur.status === 403) throw { code: 'scope' };
-    else if (cur.status !== 404) throw { code: 'http', status: cur.status };
-    const body = { message: 'update', content: b64.enc(utf8.enc(await seal(next))), branch: branch };
-    if (sha) body.sha = sha;
-    const put = await api('/contents/data.json', { method: 'PUT', body: JSON.stringify(body) });
-    if (put.status !== 200 && put.status !== 201) throw { code: put.status === 401 ? 'auth' : put.status === 403 || put.status === 404 ? 'scope' : put.status === 409 || put.status === 422 ? 'race' : 'http', status: put.status };
-    state = migrate(JSON.parse(JSON.stringify(next))); remember(next); syncedAt = Date.now(); offline = false;
+    const next = await writeRemote((remote) => { if (!force && remote && (+remote.rev || 0) !== baseRev) throw { code: 'changed' }; return mine; });
+    landed(next);
     draft = null; dirty = false; saving = false; mode = 'view';
     notice = { kind: 'ok', text: 'Сохранено. На других телефонах расписание обновится через минуту-две.' };
     render(); window.scrollTo(0, 0);
@@ -661,9 +713,29 @@ async function save(force) {
     else if (code === 'scope') saveMsg = { kind: 'err', text: 'У токена нет права записи в репозиторий сайта. Нужно разрешение Contents: Read and write.', copy: true };
     else if (code === 'race') saveMsg = { kind: 'err', text: 'Файл расписания только что изменился. Нажмите «Сохранить» ещё раз.' };
     else if (code === 'network') saveMsg = { kind: 'err', text: 'Нет связи с GitHub. Проверьте интернет и нажмите «Сохранить» ещё раз.' };
-    else if (code === 'norepo') saveMsg = { kind: 'err', text: 'Не удалось определить репозиторий этого сайта.', copy: true };
-    else saveMsg = { kind: 'err', text: 'Не получилось сохранить' + (e && e.status ? ' (ошибка ' + e.status + ')' : '') + '. Попробуйте ещё раз.', copy: true };
+    else saveMsg = { kind: 'err', text: failText(e), copy: true };
     renderSaveBar();
+  }
+}
+/* Day marks are applied on top of the newest copy, so they never collide with other edits. */
+async function saveMarks(changes, after) {
+  if (saving || !gh) return;
+  saving = true; markMsg = { kind: 'ok', text: 'Сохраняю…' }; render(true);
+  try {
+    const next = await writeRemote((remote) => {
+      const base = normalize(migrate(JSON.parse(JSON.stringify(remote || state))));
+      Object.keys(changes).forEach((k) => { if (!isIso(k)) return; if (STAYV.indexOf(changes[k]) >= 0) base.marks[k] = changes[k]; else delete base.marks[k]; });
+      base.marks = cleanMarks(base.marks);
+      base.updated = rigaNow().date;
+      return base;
+    });
+    landed(next);
+    saving = false;
+    markMsg = { kind: 'ok', text: 'Сохранено. На других телефонах обновится через минуту-две.' };
+    if (after) after();
+    render(true);
+  } catch (e) {
+    saving = false; markMsg = { kind: 'err', text: failText(e) }; render(true);
   }
 }
 function copyDraft() {
@@ -688,12 +760,12 @@ function gate() {
 }
 function loginView() {
   const r = repoInfo();
+  const form = 'https://github.com/settings/personal-access-tokens/new?name=' + encodeURIComponent('Расписание: редактор') + '&description=' + encodeURIComponent('Сохранение расписания с сайта') + (r ? '&target_name=' + encodeURIComponent(r.owner) : '') + '&expires_in=366&contents=write';
   return '<form class="ed gate" data-form="login" novalidate><h1 class="ed-h">Вход для редактора</h1>'
     + '<p class="ed-lead">Менять расписание может только владелец репозитория этого сайта на GitHub. Для этого нужен личный токен. Он сохранится только в этом браузере.</p>'
-    + '<ol class="steps"><li>На github.com откройте Settings → Developer settings → Personal access tokens → Fine-grained tokens и нажмите Generate new token.</li>'
+    + '<ol class="steps"><li>Откройте <a href="' + esc(form) + '" target="_blank" rel="noopener noreferrer">страницу создания токена на GitHub</a>. Название, срок на год и право Contents: Read and write там уже заполнены.</li>'
     + '<li>В Repository access выберите Only select repositories' + (r ? ' и отметьте <b>' + esc(r.owner + '/' + r.repo) + '</b>' : ' и отметьте репозиторий этого сайта') + '.</li>'
-    + '<li>В Permissions → Repository permissions поставьте Contents: Read and write.</li>'
-    + '<li>Нажмите Generate token и вставьте токен сюда.</li></ol>'
+    + '<li>Нажмите Generate token, скопируйте токен и вставьте его сюда.</li></ol>'
     + '<label><span class="lbl">Токен GitHub</span><input type="password" id="f-token" autocomplete="off" autocapitalize="off" spellcheck="false"></label>'
     + (loginMsg ? '<p class="save-msg err" role="alert">' + esc(loginMsg) + '</p>' : '')
     + '<div class="quick"><button type="submit" class="btn primary"' + (loginBusy ? ' disabled' : '') + '>' + (loginBusy ? 'Проверяю…' : 'Войти') + '</button><button type="button" class="btn" data-act="login-back">Назад</button></div></form>';
@@ -722,12 +794,18 @@ app.addEventListener('click', (e) => {
   if (mode === 'login') { if (act === 'login-back' && !loginBusy) { mode = 'view'; loginMsg = ''; render(); window.scrollTo(0, 0); } return; }
   if (mode === 'view') {
     if (notice) notice = null;
+    if (act !== 'mark' && act !== 'paint-save' && act !== 'brush' && act !== 'dab') markMsg = null;
     if (act === 'view') { setView(el.dataset.v); render(); }
     else if (act === 'prev' || act === 'next') { shift(act === 'next' ? 1 : -1); render(true); }
     else if (act === 'today') { cursor = NOW.date; render(true); }
     else if (act === 'open') { cursor = el.dataset.d; view = 'day'; render(); window.scrollTo(0, 0); }
     else if (act === 'edit') startEdit({ sec: el.dataset.sec });
-    else if (act === 'ov') startEdit({ sec: 'stay', ov: el.dataset.d });
+    else if (act === 'paint') { paint = { brush: 'nn', changes: {}, merged: Object.assign({}, state.marks) }; view = 'month'; render(); window.scrollTo(0, 0); }
+    else if (act === 'brush') { if (paint) { paint.brush = el.dataset.v || ''; render(true); } }
+    else if (act === 'dab') { if (!saving) dab(el.dataset.d); }
+    else if (act === 'paint-cancel') { paint = null; render(true); }
+    else if (act === 'paint-save') { if (paint) { if (Object.keys(paint.changes).length) saveMarks(paint.changes, () => { paint = null; }); else { paint = null; render(true); } } }
+    else if (act === 'mark') { const ch = {}; ch[el.dataset.d] = el.dataset.v || ''; saveMarks(ch); }
     else if (act === 'addplan') startEdit({ sec: 'plans', plan: el.dataset.d });
     else if (act === 'login') { mode = 'login'; loginMsg = ''; loginBusy = false; render(); window.scrollTo(0, 0); }
     else if (act === 'logout') { gh = null; ls.del('sched.gh'); notice = { kind: 'ok', text: 'Режим редактора выключен на этом устройстве.' }; render(); window.scrollTo(0, 0); }
@@ -738,6 +816,7 @@ app.addEventListener('click', (e) => {
   else if (act === 'add') addRow(el.dataset.list);
   else if (act === 'del') delRow(el.dataset.list, +el.dataset.i);
   else if (act === 'clear-sample') { for (let w = 1; w <= 5; w++) draft.lessons[w] = []; draft.sample = false; markDirty(); const b = D.getElementById('ed-sample'); if (b) b.remove(); rerender('lessons'); }
+  else if (act === 'clear-marks') { draft.marks = {}; markDirty(); rerender('stay'); }
   else if (act === 'save') save(false);
   else if (act === 'save-force') save(true);
   else if (act === 'cancel') { if (dirty) { askCancel = true; renderSaveBar(); } else exitEdit(); }

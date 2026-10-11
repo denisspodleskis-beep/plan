@@ -1,5 +1,5 @@
 /* Keeps the page shell on the device so it opens without a connection. The timetable file itself is never stored here. */
-const CACHE = 'shell-v1';
+const CACHE = 'shell-v2';
 const SHELL = ["./", "index.html", "app.css", "app.js", "icon.svg", "icon-192.png", "apple-touch-icon.png", "fonts/golos-text-cyrillic-400-normal.woff2", "fonts/golos-text-latin-400-normal.woff2", "fonts/golos-text-latin-ext-400-normal.woff2", "fonts/golos-text-cyrillic-500-normal.woff2", "fonts/golos-text-latin-500-normal.woff2", "fonts/golos-text-latin-ext-500-normal.woff2", "fonts/golos-text-cyrillic-600-normal.woff2", "fonts/golos-text-latin-600-normal.woff2", "fonts/golos-text-latin-ext-600-normal.woff2", "fonts/golos-text-cyrillic-700-normal.woff2", "fonts/golos-text-latin-700-normal.woff2", "fonts/golos-text-latin-ext-700-normal.woff2", "fonts/unbounded-cyrillic-600-normal.woff2", "fonts/unbounded-latin-600-normal.woff2"];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });

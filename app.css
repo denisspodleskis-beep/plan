@@ -256,3 +256,13 @@ details[open]>summary .chev{transform:rotate(180deg)}
 .linkbtn{appearance:none;border:0;background:none;padding:0;margin:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
 .gate{max-width:560px}
 .steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.45;color:var(--ink2)}
+
+/* marking days */
+.markrow{display:flex;flex-direction:column;gap:7px}
+.btn.mark.on{border-color:transparent;box-shadow:inset 0 0 0 2px currentColor}
+.seg.brush{grid-column:auto;grid-row:auto;flex:1 1 100%;max-width:460px}
+.brush button[data-v="nn"][aria-pressed="true"]{background:var(--nat-bg);color:var(--nat-ink);box-shadow:inset 0 0 0 2px var(--nat-ink)}
+.brush button[data-v="dd"][aria-pressed="true"]{background:var(--den-bg);color:var(--den-ink);box-shadow:inset 0 0 0 2px var(--den-ink)}
+.mo-cell.chg{outline:2px dashed var(--ink);outline-offset:-3px}
+.paint-hint{font-size:14px;color:var(--ink2)}
+.steps a{color:inherit;font-weight:600}
