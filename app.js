@@ -44,6 +44,8 @@ function rigaNow() {
 
 const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const WDF = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+const WDV = ['в понедельник', 'во вторник', 'в среду', 'в четверг', 'в пятницу', 'в субботу', 'в воскресенье'];
+const WDS = ['с понедельника', 'со вторника', 'со среды', 'с четверга', 'с пятницы', 'с субботы', 'с воскресенья'];
 const MG = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const MN = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const MS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -58,6 +60,7 @@ function fmtSpan(a, b) {
 /* ---------- state ---------- */
 const cleanMarks = (m) => { const o = {}; if (m && typeof m === 'object') Object.keys(m).sort().forEach((k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(k) && (m[k] === 'nn' || m[k] === 'dd' || m[k] === 'nd' || m[k] === 'dn')) o[k] = m[k]; }); return o; };
 const VIEWS = ['day', 'week', 'month'];
+const TABS = VIEWS.concat(['pack']);   /* only the period views are remembered between visits */
 const STAYV = ['nn', 'dd', 'nd', 'dn'];
 const fill7 = (a) => { const o = []; for (let i = 0; i < 7; i++) o.push(Array.isArray(a) && STAYV.indexOf(a[i]) >= 0 ? a[i] : ''); return o; };
 const uniqDays = (a) => { const o = []; (Array.isArray(a) ? a : []).forEach((x) => { x = +x; if (x >= 1 && x <= 7 && o.indexOf(x) < 0) o.push(x); }); return o.sort((x, y) => x - y); };
@@ -80,6 +83,7 @@ function migrate(s) {
   s.note = typeof s.note === 'string' ? s.note : '';
   s.rev = +s.rev || 0;
   s.marks = cleanMarks(s.marks);
+  s.pack = Array.isArray(s.pack) ? s.pack.filter((x) => typeof x === 'string') : [];
   return s;
 }
 
@@ -92,7 +96,7 @@ function normalize(d) {
     child: { name: T(d.child.name), gen: T(d.child.gen) },
     people: { n: { name: T(d.people.n.name), gen: T(d.people.n.gen) }, d: { name: T(d.people.d.name), gen: T(d.people.d.gen) } },
     stay: { mode: d.stay.mode === 'biweekly' ? 'biweekly' : 'weekly', anchor: isIso(d.stay.anchor) ? monday(d.stay.anchor) : '', a: fill7(d.stay.a), b: fill7(d.stay.b) },
-    stayOverrides: [], marks: cleanMarks(d.marks), bells: [], lessons: {}, clubs: [], plans: [], daysOff: []
+    stayOverrides: [], marks: cleanMarks(d.marks), bells: [], lessons: {}, clubs: [], plans: [], daysOff: [], pack: []
   };
   if (o.stay.mode === 'biweekly' && !o.stay.anchor) o.stay.anchor = monday(rigaNow().date);
   (d.stayOverrides || []).forEach((x) => { if (x && isIso(x.from) && STAYV.indexOf(x.v) >= 0) o.stayOverrides.push({ from: x.from, to: isIso(x.to) && x.to >= x.from ? x.to : x.from, v: x.v }); });
@@ -108,6 +112,7 @@ function normalize(d) {
   o.plans.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byStart(a, b)));
   (d.daysOff || []).forEach((x) => { if (x && isIso(x.from)) o.daysOff.push({ from: x.from, to: isIso(x.to) && x.to >= x.from ? x.to : x.from, t: T(x.t) }); });
   o.daysOff.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  (d.pack || []).forEach((x) => { x = T(x); if (x && o.pack.indexOf(x) < 0) o.pack.push(x); });
   return o;
 }
 const sameData = (a, b) => { const x = normalize(migrate(JSON.parse(JSON.stringify(a)))), y = normalize(migrate(JSON.parse(JSON.stringify(b)))); x.updated = y.updated = ''; x.rev = y.rev = 0; return JSON.stringify(x) === JSON.stringify(y); };
@@ -118,7 +123,7 @@ let view = 'day', cursor = NOW.date, mode = 'view';
 let draft = null, dirty = false, edWd = 1, openSecs = {}, saving = false, askCancel = false, saveMsg = null;
 let notice = null, lastNow = '';
 let phase = 'boot', key = null, keyText = '', offline = false, syncedAt = 0, gateMsg = '';
-let gh = null, loginMsg = '', loginBusy = false, baseRev = 0, paint = null, markMsg = null;
+let gh = null, loginMsg = '', loginBusy = false, baseRev = 0, paint = null, markMsg = null, packMem = null;
 const editable = () => !!gh;
 
 const ss = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* storage is optional */ } }, del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage is optional */ } } };
@@ -169,6 +174,7 @@ function stayPick(v) { const p = stayParts(v); if (!p) return ''; return p.same 
 /* ---------- icons ---------- */
 const svg = (d) => '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="' + d + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const IC_L = svg('M12 5l-5 5 5 5'), IC_R = svg('M8 5l5 5-5 5'), IC_X = svg('M6 6l8 8M14 6l-8 8'), IC_GO = svg('M7 13l6-6M8 7h5v5');
+const IC_OK = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5L15.5 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const IC_D = '<svg class="chev" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 /* ---------- views ---------- */
@@ -187,7 +193,7 @@ function topBar() {
   const ready = phase === 'ready', plain = ready && mode === 'view' && !paint;
   let h = '<header class="top"><div class="in top-in"><div class="brand"><span class="brand-name">' + esc((ready && state.child.name) || 'Расписание') + '</span>' + (ready && state.child.name ? '<span class="brand-sub">' + (mode === 'edit' ? 'изменение расписания' : mode === 'login' ? 'вход для редактора' : paint ? 'отмечаем дни' : 'расписание') + '</span>' : '') + '</div>';
   if (plain && editable()) h += '<button type="button" class="btn" data-act="edit">Изменить</button>';
-  if (plain) h += '<div class="seg" role="group" aria-label="Период">' + [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц']].map((v) => '<button type="button" data-act="view" data-v="' + v[0] + '" aria-pressed="' + (view === v[0]) + '">' + v[1] + '</button>').join('') + '</div>';
+  if (plain) h += '<div class="seg" role="group" aria-label="Раздел">' + [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц'], ['pack', 'Сборы']].map((v) => '<button type="button" data-act="view" data-v="' + v[0] + '" aria-pressed="' + (view === v[0]) + '">' + v[1] + '</button>').join('') + '</div>';
   return h + '</div></header>';
 }
 
@@ -279,6 +285,7 @@ function dayView() {
   lastNow = info ? info.text : '';
   let h = '<div class="day">' + stayBanner(stayOn(iso));
   if (editable()) h += markRow(iso);
+  if (iso === NOW.date) h += packCall();
   if (info) h += '<p class="nowline">' + esc(info.text) + '</p>';
   if (L.length) {
     h += '<section><div class="sec-h"><h2>Уроки</h2><span>' + fmtR(L[0].s, L[L.length - 1].e) + ' · ' + plural(L.length, ['урок', 'урока', 'уроков']) + '</span></div><ol class="tl">'
@@ -358,6 +365,69 @@ function legend(month, seen) {
   return '<div class="legend"><span class="lg"><i class="sw s-nn"></i>у ' + esc(P.n.gen) + '</span><span class="lg"><i class="sw s-dd"></i>у ' + esc(P.d.gen) + '</span>' + half('nd') + half('dn') + '<span class="lg"><i class="mk club"></i>кружок</span><span class="lg"><i class="mk plan"></i>план</span>' + (month ? '<span class="lg"><i class="sw hatch"></i>уроков нет</span>' : '') + '</div>';
 }
 
+/* ---------- packing for a move between the two homes ---------- */
+const personOf = (c) => (c === 'n' ? state.people.n : state.people.d);
+/* The next move, counted from today. A move across midnight stays current through its first day,
+   so packing on that morning still belongs to it. Days with nothing marked break the chain. */
+function nextMove() {
+  let prev = '', prevDay = '';
+  for (let i = -1; i <= 62; i++) {
+    const iso = addDays(NOW.date, i), v = stayOn(iso);
+    if (STAYV.indexOf(v) < 0) { prev = ''; prevDay = ''; continue; }
+    if (i >= 0 && prev && prev !== v[0]) return { last: prevDay, first: iso, a: prev, b: v[0], inDay: false };
+    if (i >= 0 && v[0] !== v[1]) return { last: iso, first: iso, a: v[0], b: v[1], inDay: true };
+    prev = v[1]; prevDay = iso;
+  }
+  return null;
+}
+const moveId = (m) => (m ? m.last + '>' + m.first + ':' + m.a + m.b : 'none');
+function moveText(m) {
+  const A = personOf(m.a).gen, B = personOf(m.b).gen;
+  return m.inDay ? WDV[dow(m.last)] + ' утром у ' + A + ', вечером у ' + B : WDV[dow(m.last)] + ' у ' + A + ', ' + WDS[dow(m.first)] + ' у ' + B;
+}
+function moveWhen(m) { const n = Math.round((toTs(m.last) - toTs(NOW.date)) / DAY); return n <= 0 ? 'сегодня' : n === 1 ? 'завтра' : 'через ' + plural(n, ['день', 'дня', 'дней']); }
+/* Ticks belong to one device and to one move: a new move starts with a clean list. */
+function packDone(id) {
+  if (packMem && packMem.id === id) return packMem.done;
+  let done = [];
+  try { const o = JSON.parse(ls.get('sched.pack') || 'null'); if (o && o.id === id && Array.isArray(o.done)) done = o.done.filter((x) => typeof x === 'string'); } catch (e) { done = []; }
+  packMem = { id: id, done: done };
+  return done;
+}
+function packKeep(id, done) { packMem = { id: id, done: done }; ls.set('sched.pack', JSON.stringify(packMem)); }
+function packView() {
+  const items = state.pack, m = nextMove(), done = packDone(moveId(m)).filter((t) => items.indexOf(t) >= 0);
+  const n = done.length, all = items.length > 0 && n === items.length;
+  let h = '<div class="pack" id="pack"><div class="nav-t"><span class="kicker">сборы к переезду</span><h1 class="pk-h">Что взять с собой</h1></div>';
+  if (m) {
+    const A = personOf(m.a), B = personOf(m.b);
+    const title = m.inDay ? cap(WDF[dow(m.last)]) + ', ' + fmtD(m.last) : cap(WDF[dow(m.last)]) + ' → ' + WDF[dow(m.first)] + ', ' + fmtSpan(m.last, m.first);
+    h += '<section class="move" aria-label="Ближайший переезд"><div class="kick-row"><span class="kicker">Ближайший переезд</span><span class="pill">' + esc(moveWhen(m)) + '</span></div><p class="move-t">' + esc(title) + '</p>'
+      + '<div class="stay split"><div class="half s-' + m.a + m.a + '"><small>' + esc(m.inDay ? 'Утром' : cap(WDV[dow(m.last)])) + '</small><strong>У ' + esc(A.gen) + '</strong></div>'
+      + '<div class="half s-' + m.b + m.b + '"><small>' + esc(m.inDay ? 'Вечером' : cap(WDS[dow(m.first)])) + '</small><strong>У ' + esc(B.gen) + '</strong></div></div></section>';
+  } else h += '<div class="stay s-none"><small>Ближайший переезд</small><strong>Пока не отмечен</strong></div>';
+  if (!items.length) h += '<p class="empty">Список вещей пока пуст.' + (editable() ? ' Добавьте вещи кнопкой «Изменить список».' : '') + '</p>';
+  else {
+    h += '<section aria-label="Список вещей"><div class="sec-h"><h2>Список вещей</h2><span>' + (all ? 'всё собрано' : 'собрано ' + n + ' из ' + items.length) + '</span></div>'
+      + '<progress class="pk-bar" max="' + items.length + '" value="' + n + '" aria-hidden="true"></progress>'
+      + '<ul class="pk-list">' + items.map((t, i) => { const on = done.indexOf(t) >= 0; return '<li><label class="pk"><input type="checkbox" data-pk="' + i + '"' + (on ? ' checked' : '') + '><span class="pk-box" aria-hidden="true">' + IC_OK + '</span><span class="pk-t">' + esc(t) + '</span></label></li>'; }).join('') + '</ul></section>';
+    if (all) h += '<p class="pk-ok" role="status"><span class="pk-box" aria-hidden="true">' + IC_OK + '</span>Всё собрано, можно ехать!</p>';
+  }
+  const btns = (n ? '<button type="button" class="btn" data-act="pack-reset">Снять все галочки</button>' : '') + (editable() ? '<button type="button" class="btn" data-act="edit" data-sec="pack">Изменить список</button>' : '');
+  if (btns) h += '<div class="quick">' + btns + '</div>';
+  if (items.length) h += '<p class="hint">Галочки сохраняются только на этом устройстве. К следующему переезду список начнётся заново.</p>';
+  return h + '</div>';
+}
+/* On today's page, the day before a move and on the day itself. */
+function packCall() {
+  if (!state.pack.length) return '';
+  const m = nextMove();
+  if (!m) return '';
+  const n = Math.round((toTs(m.last) - toTs(NOW.date)) / DAY);
+  if (n < 0 || n > 1) return '';
+  return '<div class="callout pk-call" role="note"><span><b>Скоро переезд.</b> ' + esc(cap(moveText(m))) + '.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="view" data-v="pack">Что взять с собой</button></span></div>';
+}
+
 function noticeHtml() {
   if (notice.kind === 'restore') return '<div class="callout" role="status"><span>Остались несохранённые правки с прошлого раза.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="restore">Восстановить</button><button type="button" class="btn" data-act="discard">Удалить</button></span></div>';
   return '<div class="notice" role="status"><span>' + esc(notice.text) + '</span><button type="button" class="btn" data-act="dismiss">Понятно</button></div>';
@@ -370,8 +440,8 @@ function viewBody() {
   if (state.sample) h += '<div class="callout" role="note"><span><b>Образец.</b> Уроки и звонки здесь примерные. Настоящее расписание появится, когда ' + esc(state.people.d.name) + ' его внесёт.</span></div>';
   if (state.note) h += '<div class="callout" role="note"><span>' + esc(state.note) + '</span></div>';
   if (editable() && !paint && stayEmpty(state)) h += '<div class="callout" role="note"><span>Дни у ' + esc(state.people.n.gen) + ' и у ' + esc(state.people.d.gen) + ' ещё не указаны.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="paint">Отметить дни</button></span></div>';
-  h += nav();
-  h += view === 'day' ? dayView() : view === 'week' ? weekView() : monthView();
+  if (view === 'pack') h += packView();
+  else { h += nav(); h += view === 'day' ? dayView() : view === 'week' ? weekView() : monthView(); }
   h += '<p class="foot">' + (state.updated ? 'Обновлено ' + fmtD(state.updated) + ' ' + ymd(state.updated).y + '. ' : '') + 'Менять расписание может только ' + esc(state.people.d.name) + '. ' + (gh ? '<button type="button" class="linkbtn" data-act="logout">Выйти из режима редактора</button>' : '<button type="button" class="linkbtn" data-act="login">Вход для редактора</button>') + '</p>';
   if (paint) h += paintBar();
   return h;
@@ -444,13 +514,19 @@ function edOff() {
     + '<div class="two dates"><label><span class="lbl">С</span>' + inp('date', 'daysOff.' + i + '.from', o.from) + '</label><label><span class="lbl">По</span>' + inp('date', 'daysOff.' + i + '.to', o.to) + '</label></div></div>').join('')
     + addBtn('off', 'Добавить период') + '<p class="hint">В эти дни уроки не показываются. Кружки остаются.</p>';
 }
+function edPack() {
+  return '<p class="hint">Список виден всем в разделе «Сборы». Галочки каждый ставит на своём устройстве.</p>'
+    + draft.pack.map((t, i) => '<div class="prow"><b>' + (i + 1) + '</b>' + inp('text', 'pack.' + i, t, ' aria-label="Вещь ' + (i + 1) + '" autocomplete="off"') + delBtn('pack', i, 'Убрать вещь ' + (i + 1)) + '</div>').join('')
+    + addBtn('pack', 'Добавить вещь') + '<p class="hint">Пустые строки не сохраняются.</p>';
+}
 const SECS = [
   ['stay', () => 'Где ' + draft.child.name, () => 'Дни у ' + draft.people.n.gen + ' и у ' + draft.people.d.gen, edStay],
   ['lessons', () => 'Уроки', () => 'Расписание по дням недели', edLessons],
   ['bells', () => 'Звонки', () => (draft.bells.length ? plural(draft.bells.length, ['урок', 'урока', 'уроков']) + ' в сетке' : 'время уроков не задано'), edBells],
   ['clubs', () => 'Кружки', () => (draft.clubs.length ? plural(draft.clubs.length, ['кружок', 'кружка', 'кружков']) : 'пока нет'), edClubs],
   ['plans', () => 'Планы', () => (draft.plans.length ? plural(draft.plans.length, ['план', 'плана', 'планов']) : 'разовые события: поездки, врач, праздники'), edPlans],
-  ['off', () => 'Каникулы и выходные', () => (draft.daysOff.length ? plural(draft.daysOff.length, ['период', 'периода', 'периодов']) + ' без уроков' : 'дни без уроков'), edOff]
+  ['off', () => 'Каникулы и выходные', () => (draft.daysOff.length ? plural(draft.daysOff.length, ['период', 'периода', 'периодов']) + ' без уроков' : 'дни без уроков'), edOff],
+  ['pack', () => 'Сборы: что взять с собой', () => (draft.pack.length ? plural(draft.pack.length, ['вещь', 'вещи', 'вещей']) + ' в списке' : 'список пуст'), edPack]
 ];
 const secOf = (id) => SECS.filter((s) => s[0] === id)[0];
 function saveBarInner() {
@@ -491,14 +567,15 @@ const LISTS = {
   bells: { path: 'bells', sec: 'bells', focus: '0', make: () => { const l = draft.bells[draft.bells.length - 1], e = l ? mins(l[1]) : null, s = e == null ? 510 : e + 10; return [hhmm(s), hhmm(s + 40)]; } },
   clubs: { path: 'clubs', sec: 'clubs', focus: 't', make: () => ({ t: '', days: [], s: '', e: '', where: '', note: '', urlTo: '', urlBack: '' }) },
   plans: { path: 'plans', sec: 'plans', focus: 't', make: () => ({ date: cursor, to: '', s: '', e: '', t: '', note: '' }) },
-  off: { path: 'daysOff', sec: 'off', focus: 't', make: () => ({ from: '', to: '', t: '' }) }
+  off: { path: 'daysOff', sec: 'off', focus: 't', make: () => ({ from: '', to: '', t: '' }) },
+  pack: { path: 'pack', sec: 'pack', focus: '', make: () => '' }
 };
 function addRow(list) {
   const L = LISTS[list]; if (!L) return;
   draft[L.path].push(L.make());
   markDirty(); rerender(L.sec);
   if (list === 'bells') rerender('lessons');
-  const f = D.getElementById(idOf(L.path + '.' + (draft[L.path].length - 1) + '.' + L.focus));
+  const f = D.getElementById(idOf(L.path + '.' + (draft[L.path].length - 1) + (L.focus ? '.' + L.focus : '')));
   if (f) f.focus();
 }
 function delRow(list, i) {
@@ -575,7 +652,7 @@ async function fetchSealed() {
   return res.text();
 }
 function lockOut() {
-  key = null; keyText = ''; ls.del('sched.k'); ls.del('sched.cache');
+  key = null; keyText = ''; ls.del('sched.k'); ls.del('sched.cache'); ls.del('sched.pack'); packMem = null;
   phase = 'badkey'; mode = 'view'; draft = null; paint = null; render();
 }
 function candidates() {
@@ -786,9 +863,10 @@ function render(keepScroll) {
   if (keepScroll) window.scrollTo(0, y);
 }
 function setView(v) {
-  if (VIEWS.indexOf(v) < 0) return;
-  if (contains(view, cursor, NOW.date)) cursor = NOW.date;
-  view = v; ls.set('sched.tab', v);
+  if (TABS.indexOf(v) < 0) return;
+  if (VIEWS.indexOf(view) >= 0 && contains(view, cursor, NOW.date)) cursor = NOW.date;
+  view = v;
+  if (VIEWS.indexOf(v) >= 0) { ls.set('sched.tab', v); ss.del('sched.view'); } else ss.set('sched.view', v);
 }
 app.addEventListener('click', (e) => {
   const el = e.target.closest ? e.target.closest('[data-act]') : null;
@@ -800,7 +878,8 @@ app.addEventListener('click', (e) => {
   if (mode === 'view') {
     if (notice) notice = null;
     if (act !== 'mark' && act !== 'paint-save' && act !== 'brush' && act !== 'dab') markMsg = null;
-    if (act === 'view') { setView(el.dataset.v); render(); }
+    if (act === 'view') { setView(el.dataset.v); render(); if (view === 'pack') window.scrollTo(0, 0); }
+    else if (act === 'pack-reset') { packKeep(moveId(nextMove()), []); render(true); }
     else if (act === 'prev' || act === 'next') { shift(act === 'next' ? 1 : -1); render(true); }
     else if (act === 'today') { cursor = NOW.date; render(true); }
     else if (act === 'open') { cursor = el.dataset.d; view = 'day'; render(); window.scrollTo(0, 0); }
@@ -862,11 +941,24 @@ function onField(e) {
   else if (k === 'stay.anchor') { if (isIso(draft.stay.anchor)) draft.stay.anchor = monday(draft.stay.anchor); rerender('stay'); }
   else if (k.indexOf('bells.') === 0) { rerender('lessons'); const sub = D.getElementById('sub-bells'); if (sub) sub.textContent = secOf('bells')[2](); }
 }
+app.addEventListener('change', (e) => {
+  const el = e.target;
+  if (!el || !el.dataset || el.dataset.pk == null || phase !== 'ready' || mode !== 'view' || view !== 'pack') return;
+  const i = +el.dataset.pk, t = state.pack[i];
+  if (typeof t !== 'string') return;
+  const id = moveId(nextMove()), done = packDone(id).filter((x) => x !== t && state.pack.indexOf(x) >= 0);
+  if (el.checked) done.push(t);
+  const had = D.activeElement === el;
+  packKeep(id, done);
+  render(true);
+  const f = had && app.querySelector('[data-pk="' + i + '"]');
+  if (f) f.focus({ preventScroll: true });
+});
 app.addEventListener('input', onField);
 app.addEventListener('change', onField);
 app.addEventListener('toggle', (e) => { const d = e.target; if (d && d.matches && d.matches('details.sec')) openSecs[d.dataset.sec] = d.open; }, true);
 D.addEventListener('keydown', (e) => {
-  if (phase !== 'ready' || mode !== 'view' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (phase !== 'ready' || mode !== 'view' || view === 'pack' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
   const t = e.target;
   if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
   if (e.key === 'ArrowLeft') { shift(-1); render(true); }
@@ -887,6 +979,7 @@ function tick() {
 (async function boot() {
   const t = ls.get('sched.tab');
   if (VIEWS.indexOf(t) >= 0) view = t;
+  if (ss.get('sched.view') === 'pack') view = 'pack';
   render();
   if (!window.crypto || !crypto.subtle || !window.fetch) { phase = 'error'; render(); return; }
   gh = readGh();
