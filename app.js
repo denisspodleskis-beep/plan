@@ -123,7 +123,7 @@ let view = 'day', cursor = NOW.date, mode = 'view';
 let draft = null, dirty = false, edWd = 1, openSecs = {}, saving = false, askCancel = false, saveMsg = null;
 let notice = null, lastNow = '';
 let phase = 'boot', key = null, keyText = '', offline = false, syncedAt = 0, gateMsg = '';
-let gh = null, loginMsg = '', loginBusy = false, baseRev = 0, paint = null, markMsg = null, packMem = null;
+let gh = null, loginMsg = '', loginBusy = false, baseRev = 0, picked = {}, markMsg = null, packMem = null;
 const editable = () => !!gh;
 
 const ss = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* storage is optional */ } }, del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* storage is optional */ } } };
@@ -131,7 +131,7 @@ const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return
 
 /* ---------- what happens on a given day ---------- */
 /* A day marked in the calendar wins over exceptions and over the weekly template. */
-function marksNow() { return paint ? paint.merged : state.marks; }
+function marksNow() { return state.marks; }
 function stayOn(iso, src) {
   const s = src || state, ov = s.stayOverrides || [], mk = src ? (src.marks || {}) : marksNow();
   if (STAYV.indexOf(mk[iso]) >= 0) return mk[iso];
@@ -190,8 +190,8 @@ function shift(n) {
 }
 
 function topBar() {
-  const ready = phase === 'ready', plain = ready && mode === 'view' && !paint;
-  let h = '<header class="top"><div class="in top-in"><div class="brand"><span class="brand-name">' + esc((ready && state.child.name) || 'Расписание') + '</span>' + (ready && state.child.name ? '<span class="brand-sub">' + (mode === 'edit' ? 'изменение расписания' : mode === 'login' ? 'вход для редактора' : paint ? 'отмечаем дни' : 'расписание') + '</span>' : '') + '</div>';
+  const ready = phase === 'ready', plain = ready && mode === 'view';
+  let h = '<header class="top"><div class="in top-in"><div class="brand"><span class="brand-name">' + esc((ready && state.child.name) || 'Расписание') + '</span>' + (ready && state.child.name ? '<span class="brand-sub">' + (mode === 'edit' ? 'изменение расписания' : mode === 'login' ? 'вход для редактора' : 'расписание') + '</span>' : '') + '</div>';
   if (plain && editable()) h += '<button type="button" class="btn" data-act="edit">Изменить</button>';
   if (plain) h += '<div class="seg" role="group" aria-label="Раздел">' + [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц'], ['pack', 'Сборы']].map((v) => '<button type="button" data-act="view" data-v="' + v[0] + '" aria-pressed="' + (view === v[0]) + '">' + v[1] + '</button>').join('') + '</div>';
   return h + '</div></header>';
@@ -249,26 +249,28 @@ function markRow(iso) {
     + (state.marks[iso] ? '<div class="quick"><button type="button" class="btn" data-act="mark" data-d="' + iso + '" data-v=""' + off + '>Сбросить</button></div>' : '')
     + (markMsg ? '<p class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</p>' : '') + '</div>';
 }
-function paintEntry() {
-  if (!editable() || paint) return '';
-  return '<div class="quick"><button type="button" class="btn" data-act="paint">Отметить дни</button>' + (markMsg ? '<span class="save-msg ' + markMsg.kind + '" role="status">' + esc(markMsg.text) + '</span>' : '') + '</div>';
+/* ---------- marking days right in the month calendar (editor only) ---------- */
+const pickedDays = () => Object.keys(picked).filter(isIso).sort();
+const stayUsed = (s) => s.stayOverrides.length > 0 || s.stay.a.some(Boolean) || (s.stay.mode === 'biweekly' && s.stay.b.some(Boolean));
+function pickBar() {
+  const days = pickedDays(), n = days.length, off = saving ? ' disabled' : '', bad = markMsg && markMsg.kind === 'err';
+  const b = (val) => '<button type="button" class="btn mark ' + sClass(val) + '" data-act="pick-set" data-v="' + val + '"' + off + '>' + stayPick(val) + '</button>';
+  return '<div class="savebar pickbar" id="pickbar" role="group" aria-label="Отметить выбранные дни">'
+    + '<div class="pick-h"><b>' + (saving ? 'Сохраняю…' : 'Выбрано: ' + plural(n, ['день', 'дня', 'дней'])) + '</b><button type="button" class="linkbtn" data-act="pick-none"' + off + '>Снять выбор</button></div>'
+    + '<div class="pick">' + STAYV.map(b).join('') + '</div>'
+    + '<div class="quick"><button type="button" class="btn" data-act="pick-set" data-v=""' + off + '>Стереть отметку</button>'
+    + (n === 1 ? '<button type="button" class="btn" data-act="open" data-d="' + days[0] + '"' + off + '>Открыть день</button>' : '') + '</div>'
+    + (bad ? '<p class="save-msg err" role="status">' + esc(markMsg.text) + '</p>' : '') + '</div>';
 }
-function paintBar() {
-  const n = Object.keys(paint.changes).length, off = saving ? ' disabled' : '', bad = markMsg && markMsg.kind === 'err';
-  const b = (val, wide) => '<button type="button"' + (wide ? ' class="wide"' : '') + ' data-act="brush" data-v="' + val + '" aria-pressed="' + (paint.brush === val) + '">' + (val ? stayPick(val) : 'Стереть') + '</button>';
-  return '<div class="savebar" id="paintbar"><div class="brush" role="group" aria-label="Кого отмечаем">' + b('nn') + b('dd') + b('') + b('nd', true) + b('dn', true) + '</div>'
-    + '<button type="button" class="btn primary" data-act="paint-save"' + off + '>' + (saving ? 'Сохраняю…' : 'Сохранить') + '</button><button type="button" class="btn" data-act="paint-cancel"' + off + '>Отмена</button>'
-    + '<span class="save-msg' + (bad ? ' err' : ' inl') + '" role="status">' + esc(bad ? markMsg.text : 'Изменено дней: ' + n) + '</span></div>';
-}
-function dab(d) {
-  if (!paint || !isIso(d)) return;
-  const cur = state.marks[d] || '', want = paint.brush;
-  if (paint.changes[d] === want || want === cur) delete paint.changes[d];
-  else paint.changes[d] = want;
-  const m = Object.assign({}, state.marks);
-  Object.keys(paint.changes).forEach((k) => { if (paint.changes[k]) m[k] = paint.changes[k]; else delete m[k]; });
-  paint.merged = m;
-  render(true);
+function pickSet(v) {
+  const days = pickedDays();
+  if (!days.length || saving) return;
+  const ch = {};
+  days.forEach((d) => { ch[d] = v; });
+  saveMarks(ch, () => {
+    picked = {};
+    markMsg = { kind: 'ok', text: (v ? 'Сохранено: ' + plural(days.length, ['день', 'дня', 'дней']) + ' — ' + stayLong(v) : 'Отметки убраны: ' + plural(days.length, ['день', 'дня', 'дней'])) + '. На других телефонах обновится через минуту-две.' };
+  });
 }
 const outLink = (u, t) => '<a class="lnk" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + IC_GO + esc(t) + '</a>';
 function restRow(x, curKey) {
@@ -321,7 +323,7 @@ function weekDay(iso) {
 }
 function weekView() {
   const a = monday(cursor);
-  let h = paintEntry() + '<div class="wk">';
+  let h = '<div class="wk">';
   for (let i = 0; i < 7; i++) h += weekDay(addDays(a, i));
   return h + '</div>' + legend(false);
 }
@@ -331,11 +333,12 @@ function monthCell(iso, inMonth) {
   const cls = ['mo-cell', sClass(v)];
   if (!inMonth) cls.push('out');
   if (iso === NOW.date) cls.push('today');
-  if (paint && paint.changes[iso] !== undefined) cls.push('chg');
+  const ed = editable();
+  if (ed && picked[iso]) cls.push('picked');
   const isOff = off && w < 5;
   if (isOff) cls.push('off');
   const label = [fmtD(iso), WDF[w], stayShort(v), isOff ? (off.t || 'уроков нет') : ''].concat(C.map((c) => 'кружок: ' + c.t), P.map((p) => 'план: ' + p.t)).filter(Boolean).join(', ');
-  return '<button type="button" class="' + cls.join(' ') + '" data-act="' + (paint ? 'dab' : 'open') + '" data-d="' + iso + '" aria-label="' + esc(label) + '"><span class="mo-in">'
+  return '<button type="button" class="' + cls.join(' ') + '" data-act="' + (ed ? 'pick' : 'open') + '" data-d="' + iso + '"' + (ed ? ' aria-pressed="' + !!picked[iso] + '"' : '') + ' aria-label="' + esc(label) + '">' + (ed && picked[iso] ? '<span class="mo-chk" aria-hidden="true">' + IC_OK + '</span>' : '') + '<span class="mo-in">'
     + '<span class="mo-top"><span class="mo-d">' + ymd(iso).d + '</span><span class="mo-who">' + esc(stayLetters(v)) + '</span></span>'
     + '<span class="mo-marks">' + C.map(() => '<i class="mk club"></i>').join('') + P.map(() => '<i class="mk plan"></i>').join('') + '</span>'
     + '<span class="mo-text">' + (isOff ? '<span>' + esc(off.t || 'Уроков нет') + '</span>' : '') + C.map((c) => '<span>' + (fmtT(c.s) ? fmtT(c.s) + ' ' : '') + esc(c.t) + '</span>').join('') + P.map((p) => '<span>' + esc(p.t) + '</span>').join('') + '</span>'
@@ -343,11 +346,11 @@ function monthCell(iso, inMonth) {
 }
 function monthView() {
   const p = ymd(cursor), first = toIso(Date.UTC(p.y, p.m - 1, 1)), last = toIso(Date.UTC(p.y, p.m, 0)), ym = first.slice(0, 7);
-  let h = (paint ? '<p class="paint-hint">Выберите внизу, кого отмечаете, и нажимайте на дни. В конце нажмите «Сохранить».</p>' : paintEntry()) + '<div class="mo"><div class="mo-head" aria-hidden="true">' + WD.map((w) => '<span>' + w + '</span>').join('') + '</div><div class="mo-grid">';
+  const P = state.people, done = markMsg && markMsg.kind === 'ok' && !pickedDays().length;
+  let h = (editable() ? '<p class="paint-hint"' + (done ? ' role="status"' : '') + '>' + (done ? '<b>' + esc(markMsg.text) + '</b>' : 'Нажимайте на дни, чтобы выбрать их. Внизу появятся кнопки «У ' + esc(P.n.gen) + '» и «У ' + esc(P.d.gen) + '».') + '</p>' : '') + '<div class="mo"><div class="mo-head" aria-hidden="true">' + WD.map((w) => '<span>' + w + '</span>').join('') + '</div><div class="mo-grid">';
   const seen = {};
   for (let d = monday(first); d <= last; d = addDays(d, 7)) for (let i = 0; i < 7; i++) { const iso = addDays(d, i); seen[stayOn(iso)] = true; h += monthCell(iso, iso.slice(0, 7) === ym); }
   h += '</div></div>' + legend(true, seen);
-  if (paint) return h;
   const items = [];
   state.plans.forEach((x) => { if (x && x.t && isIso(x.date)) { const to = isIso(x.to) ? x.to : x.date; if (x.date <= last && to >= first) items.push({ from: x.date, to: to, t: x.t, kind: 'plan' }); } });
   state.daysOff.forEach((x) => { if (x && isIso(x.from)) { const to = isIso(x.to) ? x.to : x.from; if (x.from <= last && to >= first) items.push({ from: x.from, to: to, t: (x.t || 'Уроков нет'), kind: 'off' }); } });
@@ -439,11 +442,11 @@ function viewBody() {
   if (offline) h += '<div class="callout" role="status"><span>Нет связи. Показано расписание, сохранённое ' + esc(whenText(syncedAt)) + '.</span></div>';
   if (state.sample) h += '<div class="callout" role="note"><span><b>Образец.</b> Уроки и звонки здесь примерные. Настоящее расписание появится, когда ' + esc(state.people.d.name) + ' его внесёт.</span></div>';
   if (state.note) h += '<div class="callout" role="note"><span>' + esc(state.note) + '</span></div>';
-  if (editable() && !paint && stayEmpty(state)) h += '<div class="callout" role="note"><span>Дни у ' + esc(state.people.n.gen) + ' и у ' + esc(state.people.d.gen) + ' ещё не указаны.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="paint">Отметить дни</button></span></div>';
+  if (editable() && stayEmpty(state) && view !== 'month') h += '<div class="callout" role="note"><span>Дни у ' + esc(state.people.n.gen) + ' и у ' + esc(state.people.d.gen) + ' ещё не указаны.</span><span class="callout-actions"><button type="button" class="btn primary" data-act="view" data-v="month">Отметить дни</button></span></div>';
   if (view === 'pack') h += packView();
   else { h += nav(); h += view === 'day' ? dayView() : view === 'week' ? weekView() : monthView(); }
   h += '<p class="foot">' + (state.updated ? 'Обновлено ' + fmtD(state.updated) + ' ' + ymd(state.updated).y + '. ' : '') + 'Менять расписание может только ' + esc(state.people.d.name) + '. ' + (gh ? '<button type="button" class="linkbtn" data-act="logout">Выйти из режима редактора</button>' : '<button type="button" class="linkbtn" data-act="login">Вход для редактора</button>') + '</p>';
-  if (paint) h += paintBar();
+  if (view === 'month' && editable() && pickedDays().length) h += pickBar();
   return h;
 }
 
@@ -463,7 +466,7 @@ function edStay() {
   const s = draft.stay, bi = s.mode === 'biweekly', child = esc(draft.child.name);
   const block = (key, title) => '<div class="blk"><h3>' + title + '</h3>' + WDF.map((w, i) => '<label class="row"><span class="row-l">' + cap(w) + '</span>' + sel('stay.' + key + '.' + i, s[key][i], 'не указано') + '</label>').join('') + '</div>';
   const nm = Object.keys(draft.marks || {}).length;
-  let h = '<p class="hint">Отдельные дни проще отмечать прямо в календаре кнопкой «Отметить дни». Шаблон ниже действует в дни без отметки.</p>'
+  let h = '<p class="hint">Отдельные дни проще отмечать прямо в календаре, во вкладке «Месяц». Шаблон ниже действует в дни без отметки.</p>'
     + (nm ? '<div class="quick"><span class="hint">Отмечено дней в календаре: ' + nm + '.</span><button type="button" class="btn" data-act="clear-marks">Убрать все отметки</button></div>' : '')
     + '<div class="choice" role="radiogroup" aria-label="Как повторяются недели">'
     + '<label><input type="radio" name="staymode" id="f-stay-mode-weekly" data-k="stay.mode" value="weekly"' + (bi ? '' : ' checked') + '>Каждая неделя одинаковая</label>'
@@ -539,10 +542,10 @@ function saveBarInner() {
   return h;
 }
 function editor() {
-  let h = '<div class="ed"><h1 class="ed-h">Изменить расписание</h1><p class="ed-lead">Изменения увидят все, у кого есть ссылка, после нажатия «Сохранить».</p>';
+  let h = '<div class="ed"><h1 class="ed-h">Изменить расписание</h1><p class="ed-lead">Изменения увидят все, у кого есть ссылка, после нажатия «Сохранить». Дни у ' + esc(draft.people.n.gen) + ' и у ' + esc(draft.people.d.gen) + ' отмечаются прямо в календаре, во вкладке «Месяц».</p>';
   if (draft.sample) h += '<div class="callout" role="note" id="ed-sample"><span><b>Сейчас показан образец.</b> Уроки и звонки примерные: исправьте их или очистите.</span><span class="callout-actions"><button type="button" class="btn" data-act="clear-sample">Очистить уроки</button><label class="check"><input type="checkbox" id="f-sample" data-k="sample" checked>Показывать пометку «Образец»</label></span></div>';
   h += '<label><span class="lbl">Объявление вверху страницы (необязательно)</span>' + area('note', draft.note, 2, ' placeholder="Например: на этой неделе расписание другое"') + '</label>';
-  h += SECS.map((s) => '<details class="sec" data-sec="' + s[0] + '"' + (openSecs[s[0]] ? ' open' : '') + '><summary><span class="sec-t">' + esc(s[1]()) + '</span><span class="sec-s" id="sub-' + s[0] + '">' + esc(s[2]()) + '</span>' + IC_D + '</summary><div class="sec-b" id="sec-' + s[0] + '">' + s[3]() + '</div></details>').join('');
+  h += SECS.filter((s) => s[0] !== 'stay' || stayUsed(draft)).map((s) => '<details class="sec" data-sec="' + s[0] + '"' + (openSecs[s[0]] ? ' open' : '') + '><summary><span class="sec-t">' + esc(s[1]()) + '</span><span class="sec-s" id="sub-' + s[0] + '">' + esc(s[2]()) + '</span>' + IC_D + '</summary><div class="sec-b" id="sec-' + s[0] + '">' + s[3]() + '</div></details>').join('');
   return h + '<div class="savebar" id="savebar">' + saveBarInner() + '</div></div>';
 }
 function renderSaveBar() { const el = D.getElementById('savebar'); if (el) el.innerHTML = saveBarInner(); }
@@ -590,7 +593,7 @@ function startEdit(o) {
   draft = migrate(JSON.parse(JSON.stringify(o.from || state)));
   dirty = !!o.from; askCancel = false; saveMsg = null; saving = false; mode = 'edit'; notice = null; baseRev = +state.rev || 0;
   const w = dow(cursor); edWd = w < 5 ? w + 1 : 1;
-  const sec = o.sec || (stayEmpty(draft) ? 'stay' : 'lessons');
+  const sec = o.sec || 'lessons';
   openSecs = {}; openSecs[sec] = true;
   let focusId = '';
   if (o.ov) { draft.stayOverrides.push({ from: o.ov, to: o.ov, v: '' }); focusId = idOf('stayOverrides.' + (draft.stayOverrides.length - 1) + '.v'); }
@@ -653,7 +656,7 @@ async function fetchSealed() {
 }
 function lockOut() {
   key = null; keyText = ''; ls.del('sched.k'); ls.del('sched.cache'); ls.del('sched.pack'); packMem = null;
-  phase = 'badkey'; mode = 'view'; draft = null; paint = null; render();
+  phase = 'badkey'; mode = 'view'; draft = null; picked = {}; render();
 }
 function candidates() {
   const out = [];
@@ -682,13 +685,13 @@ async function start(keys) {
   offline = false; syncedAt = Date.now(); remember(obj); adopt(obj);
 }
 async function refresh() {
-  if (phase !== 'ready' || mode !== 'view' || !key || saving || paint) return;
+  if (phase !== 'ready' || mode !== 'view' || !key || saving || pickedDays().length) return;
   let text;
   try { text = await fetchSealed(); }
   catch (e) { if (!offline) { offline = true; if (mode === 'view') render(true); } return; }
   let obj;
   try { obj = await unseal(text); } catch (e) { lockOut(); return; }
-  if (phase !== 'ready' || mode !== 'view' || paint) return;
+  if (phase !== 'ready' || mode !== 'view') return;
   const was = offline;
   offline = false; syncedAt = Date.now();
   /* right after a save the host may still serve the previous copy for a minute: never step back to it */
@@ -733,7 +736,7 @@ async function login(token) {
         gh = { token: token, branch: (j && j.default_branch) || 'main' };
         ls.set('sched.gh', JSON.stringify(gh));
         loginBusy = false; mode = 'view';
-        notice = { kind: 'ok', text: 'Режим редактора включён на этом устройстве. Вверху появилась кнопка «Изменить».' };
+        notice = { kind: 'ok', text: 'Режим редактора включён на этом устройстве. Дни у ' + state.people.n.gen + ' и у ' + state.people.d.gen + ' отмечайте прямо в календаре: вкладка «Месяц», нажмите на дни. Уроки, кружки и остальное меняются кнопкой «Изменить».' };
         render(); window.scrollTo(0, 0);
         return;
       }
@@ -864,6 +867,7 @@ function render(keepScroll) {
 }
 function setView(v) {
   if (TABS.indexOf(v) < 0) return;
+  if (v !== 'month') picked = {};
   if (VIEWS.indexOf(view) >= 0 && contains(view, cursor, NOW.date)) cursor = NOW.date;
   view = v;
   if (VIEWS.indexOf(v) >= 0) { ls.set('sched.tab', v); ss.del('sched.view'); } else ss.set('sched.view', v);
@@ -877,18 +881,16 @@ app.addEventListener('click', (e) => {
   if (mode === 'login') { if (act === 'login-back' && !loginBusy) { mode = 'view'; loginMsg = ''; render(); window.scrollTo(0, 0); } return; }
   if (mode === 'view') {
     if (notice) notice = null;
-    if (act !== 'mark' && act !== 'paint-save' && act !== 'brush' && act !== 'dab') markMsg = null;
+    if (act !== 'mark' && act !== 'pick-set') markMsg = null;
     if (act === 'view') { setView(el.dataset.v); render(); if (view === 'pack') window.scrollTo(0, 0); }
     else if (act === 'pack-reset') { packKeep(moveId(nextMove()), []); render(true); }
     else if (act === 'prev' || act === 'next') { shift(act === 'next' ? 1 : -1); render(true); }
     else if (act === 'today') { cursor = NOW.date; render(true); }
-    else if (act === 'open') { cursor = el.dataset.d; view = 'day'; render(); window.scrollTo(0, 0); }
+    else if (act === 'open') { cursor = el.dataset.d; view = 'day'; picked = {}; render(); window.scrollTo(0, 0); }
     else if (act === 'edit') startEdit({ sec: el.dataset.sec });
-    else if (act === 'paint') { paint = { brush: 'nn', changes: {}, merged: Object.assign({}, state.marks) }; view = 'month'; render(); window.scrollTo(0, 0); }
-    else if (act === 'brush') { if (paint) { paint.brush = el.dataset.v || ''; render(true); } }
-    else if (act === 'dab') { if (!saving) dab(el.dataset.d); }
-    else if (act === 'paint-cancel') { paint = null; render(true); }
-    else if (act === 'paint-save') { if (paint) { if (Object.keys(paint.changes).length) saveMarks(paint.changes, () => { paint = null; }); else { paint = null; render(true); } } }
+    else if (act === 'pick') { if (!saving && isIso(el.dataset.d)) { if (picked[el.dataset.d]) delete picked[el.dataset.d]; else picked[el.dataset.d] = true; render(true); } }
+    else if (act === 'pick-none') { picked = {}; render(true); }
+    else if (act === 'pick-set') pickSet(el.dataset.v || '');
     else if (act === 'mark') { const ch = {}; ch[el.dataset.d] = el.dataset.v || ''; saveMarks(ch); }
     else if (act === 'addplan') startEdit({ sec: 'plans', plan: el.dataset.d });
     else if (act === 'login') { mode = 'login'; loginMsg = ''; loginBusy = false; render(); window.scrollTo(0, 0); }

@@ -261,19 +261,9 @@ details[open]>summary .chev{transform:rotate(180deg)}
 .markrow{display:flex;flex-direction:column;gap:7px}
 .pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-width:460px}
 .pick .btn{border-radius:14px;padding:8px 6px;min-height:44px}
-.btn.mark span,.brush button span{display:block}
+.btn.mark span{display:block}
 .btn.mark span{font-size:13px}
 .btn.mark.on{border-color:transparent;box-shadow:inset 0 0 0 2px currentColor}
-.brush{flex:1 1 100%;max-width:460px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:3px;background:var(--surface);border:1px solid var(--line);border-radius:17px;padding:3px}
-.brush button{grid-column:span 2;border:0;background:transparent;color:var(--ink2);font:600 14px/1.15 var(--body);padding:8px 6px;min-height:36px;border-radius:13px;cursor:pointer}
-.brush button.wide{grid-column:span 3;font-size:13px}
-.brush button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
-.brush button[data-v="nn"][aria-pressed="true"]{background:var(--nat-bg);color:var(--nat-ink);box-shadow:inset 0 0 0 2px var(--nat-ink)}
-.brush button[data-v="dd"][aria-pressed="true"]{background:var(--den-bg);color:var(--den-ink);box-shadow:inset 0 0 0 2px var(--den-ink)}
-.brush button[data-v="nd"][aria-pressed="true"]{background:linear-gradient(135deg,var(--nat-bg) 0 50%,var(--den-bg) 50% 100%);color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
-.brush button[data-v="dn"][aria-pressed="true"]{background:linear-gradient(135deg,var(--den-bg) 0 50%,var(--nat-bg) 50% 100%);color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
-.savebar .save-msg.inl{flex:0 0 auto;display:block;font-size:13px;white-space:nowrap;color:var(--ink2)}
-.mo-cell.chg{outline:2px dashed var(--ink);outline-offset:-3px}
 .paint-hint{font-size:14px;color:var(--ink2)}
 .steps a{color:inherit;font-weight:600}
 
@@ -303,3 +293,14 @@ details[open]>summary .chev{transform:rotate(180deg)}
 .pk-ok .pk-box svg{opacity:1}
 .prow{display:grid;grid-template-columns:18px minmax(0,1fr) 42px;gap:8px;align-items:center}
 .prow b{font:600 13px/1 var(--body);color:var(--ink2);font-variant-numeric:tabular-nums}
+
+/* choosing days in the month calendar */
+.mo-cell.picked{outline:3px solid var(--focus);outline-offset:-3px;box-shadow:inset 0 0 0 100px color-mix(in srgb,var(--focus) 16%,transparent)}
+.mo-chk{position:absolute;bottom:4px;right:4px;width:17px;height:17px;border-radius:50%;background:var(--focus);color:var(--bg);display:grid;place-items:center;z-index:1}
+.mo-chk svg{width:11px;height:11px;display:block}
+.pickbar{flex-direction:column;align-items:stretch;gap:8px}
+.pick-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:15px}
+.pickbar .pick{max-width:none}
+.pickbar .quick .btn{min-height:36px;padding-block:7px}
+.pickbar .save-msg{flex:none}
+@media (min-width:720px){.pickbar .pick{grid-template-columns:repeat(4,minmax(0,1fr))}}
